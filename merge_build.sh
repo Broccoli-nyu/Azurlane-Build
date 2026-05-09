@@ -356,6 +356,61 @@ PATCH_APK() {
     echo "补丁完成。"
 }
 
+# 注入MT文件提供器
+INJECT_MT_PROVIDER() {
+    echo "正在注入 MTDataFilesProvider..."
+    local TARGET_DIR="${DOWNLOAD_DIR}/DECODE_Output"
+    local MANIFEST_FILE="${TARGET_DIR}/AndroidManifest.xml"
+    
+    # 检查清单文件是否存在，防止路径错误
+    if [ ! -f "${MANIFEST_FILE}" ]; then
+        echo "错误：找不到 ${MANIFEST_FILE}，解包可能失败或路径不匹配！"
+        return 1
+    fi
+    
+    # 1. 自动获取包名（如果是XAPK则使用预设，如果是APK则从清单提取）
+    local CURRENT_PKG=""
+    if [ "${BUILD_TYPE}" = "XAPK" ]; then
+        CURRENT_PKG="${GAME_BUNDLE_ID}"
+    else
+        CURRENT_PKG=$(grep -oP 'package="\K[^"]+' "${MANIFEST_FILE}")
+    fi
+
+    if [ -z "${CURRENT_PKG}" ]; then
+        echo "无法识别包名，取消注入"
+        return 1
+    fi
+    echo "识别到目标包名: ${CURRENT_PKG}"
+
+    # 2. 拷贝 Smali 文件 (保持 bin/mt/file/content/ 结构)
+    mkdir -p "${TARGET_DIR}/smali"
+    if [ -d "MTDataFilesProvider/bin" ]; then
+        cp -r "MTDataFilesProvider/bin" "${TARGET_DIR}/smali/"
+        echo "Smali 文件拷贝完成"
+    else
+        echo "未找到 MTDataFilesProvider/bin 目录，请检查路径"
+        return 1
+    fi
+
+    # 3. 修改 AndroidManifest.xml
+    if grep -q "MTDataFilesProvider" "${MANIFEST_FILE}"; then
+        echo "已存在 MT 组件，跳过修改"
+    else
+        local PROVIDER_XML="<provider android:name=\"bin.mt.file.content.MTDataFilesProvider\" android:authorities=\"${CURRENT_PKG}.MTDataFilesProvider\" android:exported=\"true\" android:grantUriPermissions=\"true\" android:permission=\"android.permission.MANAGE_DOCUMENTS\"><intent-filter><action android:name=\"android.content.action.DOCUMENTS_PROVIDER\"/></intent-filter></provider>"
+        local ACTIVITY_XML="<activity android:name=\"bin.mt.file.content.MTDataFilesWakeUpActivity\" android:exported=\"true\" android:excludeFromRecents=\"true\" android:theme=\"@android:style/Theme.Translucent.NoTitleBar\" />"
+        
+        sed -i "s|</application>|${PROVIDER_XML}${ACTIVITY_XML}</application>|g" "${MANIFEST_FILE}"
+        echo "AndroidManifest.xml 注入完成"
+
+        # 二次校验是否注入成功
+        if grep -q "MTDataFilesProvider" "${MANIFEST_FILE}"; then
+            echo "AndroidManifest.xml 注入成功！"
+        else
+            echo "AndroidManifest.xml 注入失败！"
+        fi
+    fi
+}
+
 # 打包APK
 BUILD_APK() {
     local OUTPUT_APK
@@ -547,6 +602,7 @@ main() {
         DECODE_APK
         DELETE_ORGINAL_APK
         PATCH_APK
+        INJECT_MT_PROVIDER
         BUILD_APK
         OPTIMIZE_AND_SIGN_APK
         GET_GAME_VERSION
@@ -560,6 +616,7 @@ main() {
         DECODE_APK
         DELETE_ORGINAL_APK
         PATCH_APK
+        INJECT_MT_PROVIDER
         BUILD_APK
         OPTIMIZE_AND_SIGN_APK
         GET_GAME_VERSION
